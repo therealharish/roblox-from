@@ -9,6 +9,7 @@ return table.freeze({
 		UseItem = "UseItem",
 		Revive = "Revive",
 		Stagger = "Stagger",
+		Sprint = "Sprint",
 		Settings = "Settings",
 	}),
 })

@@ -7,11 +7,11 @@
       "Shared": { "$path": "src/shared" }
     },
     "ServerScriptService": {
-      "Server": { "$path": "src/server" }
+      "HollowSignalServer": { "$path": "src/server" }
     },
     "StarterPlayer": {
       "StarterPlayerScripts": {
-        "Client": { "$path": "src/client" }
+        "HollowSignalClient": { "$path": "src/client" }
       }
     },
     "Workspace": {

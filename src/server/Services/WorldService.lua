@@ -22,6 +22,8 @@ local function prompt(target: BasePart, action: string, object: string, kind: st
 	p.ObjectText = object
 	p.HoldDuration = 0.35
 	p.MaxActivationDistance = 10
+	p.KeyboardKeyCode = Enum.KeyCode.E
+	p.RequiresLineOfSight = false
 	p:SetAttribute("Kind", kind)
 	p.Parent = target
 	return p
@@ -157,8 +159,21 @@ local function wireAuthoredDoors(root: Folder)
 			local doorPrompt = candidate:FindFirstChildOfClass("ProximityPrompt") or prompt(candidate, "Open", "Door", "Door")
 			doorPrompt.ActionText = "Open"
 			doorPrompt.ObjectText = "Door"
+			doorPrompt.KeyboardKeyCode = Enum.KeyCode.E
+			doorPrompt.GamepadKeyCode = Enum.KeyCode.ButtonX
+			doorPrompt.HoldDuration = 0.15
+			doorPrompt.RequiresLineOfSight = false
 			doorPrompt:SetAttribute("Kind", "Door")
 			if item:IsA("Model") then
+				local hinge = item:FindFirstChildWhichIsA("HingeConstraint", true)
+				if hinge then
+					hinge:SetAttribute("ClosedAngle", hinge.CurrentAngle)
+					hinge.LimitsEnabled = false
+					hinge.ActuatorType = Enum.ActuatorType.Servo
+					hinge.AngularSpeed = 2.2
+					hinge.ServoMaxTorque = 100000
+					hinge.TargetAngle = hinge.CurrentAngle
+				end
 				item:SetAttribute("ClosedPivot", item:GetPivot())
 				local oldReference = doorPrompt:FindFirstChild("DoorModel")
 				if oldReference then oldReference:Destroy() end
@@ -171,6 +186,45 @@ local function wireAuthoredDoors(root: Folder)
 		end
 	end
 	print(`[Hollow Signal] Wired {wired} authored door parts`)
+end
+
+local function removeTemplateBaseplates(root: Folder)
+	local removed = 0
+	for _, item in workspace:GetDescendants() do
+		if item:IsA("BasePart") and not item:IsDescendantOf(root) then
+			local isNamedBaseplate = string.lower(item.Name) == "baseplate"
+			local isHugeStuddedSlab = item.Anchored and item.Size.X > 150 and item.Size.Z > 150 and item.TopSurface == Enum.SurfaceType.Studs
+			if isNamedBaseplate or isHugeStuddedSlab then
+				item:Destroy()
+				removed += 1
+			end
+		end
+	end
+	print(`[Hollow Signal] Removed {removed} template baseplate slabs`)
+end
+
+local function groundFloatingHouses(root: Folder)
+	local moved = 0
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { workspace.Terrain }
+	for _, item in workspace:GetDescendants() do
+		if item:IsA("Model") and string.lower(item.Name) == "house" and not item:IsDescendantOf(root) then
+			local frame, size = item:GetBoundingBox()
+			if size.Magnitude > 10 and size.Magnitude < 180 then
+				local result = workspace:Raycast(frame.Position + Vector3.new(0, 100, 0), Vector3.new(0, -300, 0), params)
+				if result then
+					local bottom = frame.Position.Y - size.Y / 2
+					local gap = bottom - result.Position.Y
+					if gap > 2 and gap < 80 then
+						item:PivotTo(item:GetPivot() - Vector3.new(0, gap, 0))
+						moved += 1
+					end
+				end
+			end
+		end
+	end
+	print(`[Hollow Signal] Grounded {moved} floating houses`)
 end
 
 local function secureAuthoredWindows(root: Folder)
@@ -203,6 +257,8 @@ local function secureAuthoredWindows(root: Folder)
 end
 
 local function addAuthoredGameplay(root: Folder)
+	removeTemplateBaseplates(root)
+	groundFloatingHouses(root)
 	local origin = findMapOrigin()
 	root:SetAttribute("AuthoredMap", true)
 	root:SetAttribute("MapOrigin", origin)
@@ -214,14 +270,43 @@ local function addAuthoredGameplay(root: Folder)
 	wireAuthoredDoors(root)
 	secureAuthoredWindows(root)
 	local markerOffsets = {
-		Vector3.new(18, 2, 15), Vector3.new(-22, 2, 20), Vector3.new(35, 2, -18),
-		Vector3.new(-38, 2, -15), Vector3.new(12, 2, 48), Vector3.new(-10, 2, -50),
-		Vector3.new(55, 2, 10), Vector3.new(-58, 2, 8),
+		Vector3.new(8, 1, 7), Vector3.new(-10, 1, 8), Vector3.new(14, 1, -9),
+		Vector3.new(-16, 1, -8), Vector3.new(20, 1, 13), Vector3.new(-22, 1, 12),
+		Vector3.new(27, 1, -15), Vector3.new(-29, 1, -14),
 	}
+	local terrainParams = RaycastParams.new()
+	terrainParams.FilterType = Enum.RaycastFilterType.Include
+	terrainParams.FilterDescendantsInstances = { workspace.Terrain }
 	for i, offset in ipairs(markerOffsets) do
-		local crate = part(`Searchable{i}`, Vector3.new(3, 2, 3), origin + offset, Color3.fromRGB(85, 65, 43), root)
+		local intended = origin + offset
+		local ground = workspace:Raycast(intended + Vector3.new(0, 150, 0), Vector3.new(0, -350, 0), terrainParams)
+		local position = ground and (ground.Position + Vector3.new(0, 1, 0)) or intended
+		local crate = part(`Searchable{i}`, Vector3.new(3, 2, 3), position, Color3.fromRGB(85, 65, 43), root)
 		crate:SetAttribute("Looted", false)
+		local highlight = Instance.new("Highlight")
+		highlight.FillColor = Color3.fromRGB(214, 172, 77)
+		highlight.FillTransparency = 0.78
+		highlight.OutlineTransparency = 0.3
+		highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+		highlight.Parent = crate
 		prompt(crate, "Search", "Abandoned supplies", "Loot")
+	end
+	local nearbyHouses = {}
+	for _, item in workspace:GetDescendants() do
+		if item:IsA("Model") and string.lower(item.Name) == "house" and not item:IsDescendantOf(root) then
+			local frame, size = item:GetBoundingBox()
+			if size.Magnitude > 10 and size.Magnitude < 180 then table.insert(nearbyHouses, { model = item, frame = frame, size = size }) end
+		end
+	end
+	table.sort(nearbyHouses, function(a, b) return (a.frame.Position - origin).Magnitude < (b.frame.Position - origin).Magnitude end)
+	for i = 1, math.min(6, #nearbyHouses) do
+		local house = nearbyHouses[i]
+		local floorPosition = Vector3.new(house.frame.Position.X, house.frame.Position.Y - house.size.Y / 2 + 1.1, house.frame.Position.Z)
+		local crate = part(`HouseSupply{i}`, Vector3.new(2.5, 1.8, 2.5), floorPosition, Color3.fromRGB(105, 76, 43), root)
+		crate:SetAttribute("Looted", false)
+		local highlight = Instance.new("Highlight")
+		highlight.FillColor = Color3.fromRGB(235, 188, 82); highlight.FillTransparency = 0.7; highlight.OutlineTransparency = 0.15; highlight.DepthMode = Enum.HighlightDepthMode.Occluded; highlight.Parent = crate
+		prompt(crate, "Search", "Household supplies", "Loot")
 	end
 	local workbench = part("Workbench", Vector3.new(6, 3, 3), origin + Vector3.new(-14, 2, 8), Color3.fromRGB(69, 48, 33), root)
 	prompt(workbench, "Craft", "Village workbench", "Craft")

@@ -64,6 +64,42 @@ condition.Font = Enum.Font.GothamBold
 condition.TextScaled = true
 condition.Parent = gui
 
+local healthBack = Instance.new("Frame")
+healthBack.Size = UDim2.fromScale(0.22, 0.018)
+healthBack.Position = UDim2.fromScale(0.025, 0.887)
+healthBack.BackgroundColor3 = Color3.fromRGB(35, 20, 22)
+healthBack.BorderSizePixel = 0
+healthBack.Parent = gui
+local healthFill = Instance.new("Frame")
+healthFill.Name = "Fill"
+healthFill.Size = UDim2.fromScale(1, 1)
+healthFill.BackgroundColor3 = Color3.fromRGB(156, 194, 105)
+healthFill.BorderSizePixel = 0
+healthFill.Parent = healthBack
+
+local downedOverlay = Instance.new("TextLabel")
+downedOverlay.Size = UDim2.fromScale(1, 1)
+downedOverlay.BackgroundColor3 = Color3.fromRGB(52, 0, 5)
+downedOverlay.BackgroundTransparency = 0.68
+downedOverlay.Text = "GRAVELY WOUNDED\nA RESIDENT MUST STABILIZE YOU"
+downedOverlay.TextColor3 = Color3.fromRGB(235, 218, 198)
+downedOverlay.Font = Enum.Font.GothamBold
+downedOverlay.TextScaled = true
+downedOverlay.Visible = false
+downedOverlay.ZIndex = 20
+downedOverlay.Parent = gui
+
+local warningSound = Instance.new("Sound")
+warningSound.Name = "WarningScreech"
+warningSound.SoundId = Config.Audio.WarningScreechId
+warningSound.Volume = 0.75
+warningSound.Parent = SoundService
+local attackSound = Instance.new("Sound")
+attackSound.Name = "AttackSting"
+attackSound.SoundId = Config.Audio.AttackStingId
+attackSound.Volume = 0.8
+attackSound.Parent = SoundService
+
 local toast = Instance.new("TextLabel")
 toast.Size = UDim2.fromScale(0.5, 0.06)
 toast.Position = UDim2.fromScale(0.25, 0.78)
@@ -84,7 +120,7 @@ crafting.Parent = gui
 Instance.new("UICorner", crafting).CornerRadius = UDim.new(0, 10)
 local layout = Instance.new("UIListLayout")
 layout.Padding = UDim.new(0, 8); layout.HorizontalAlignment = Enum.HorizontalAlignment.Center; layout.VerticalAlignment = Enum.VerticalAlignment.Center; layout.Parent = crafting
-for _, recipe in { "Flare", "Noisemaker", "Plank" } do
+for _, recipe in { "Flare", "Noisemaker", "Plank", "Bandage" } do
 	local button = Instance.new("TextButton")
 	button.Size = UDim2.fromScale(0.82, 0.2)
 	button.Text = `Craft {recipe}`
@@ -96,6 +132,27 @@ end
 
 local toastToken = 0
 local lastPhase = ""
+local currentPhase = "Day"
+local questState = { supplies = 0, wards = 0, hatch = false }
+local function updateObjective()
+	if currentPhase == "Day" then
+		if questState.supplies < 8 then
+			objective.Text = `DAY: Search abandoned homes for supplies ({questState.supplies}/8)`
+		elseif questState.wards < 2 then
+			objective.Text = `DAY: Repair the village wards ({questState.wards}/2)`
+		elseif not questState.hatch then
+			objective.Text = "DAY: Follow the repeating signal to the buried hatch"
+		else
+			objective.Text = "DAY: Return to shelter and prepare for sunset"
+		end
+	elseif currentPhase == "Warning" then
+		objective.Text = "SUNSET: Get inside—check the ward before darkness"
+	elseif currentPhase == "Siege" then
+		objective.Text = "NIGHT: Survive behind active wards • Rescue downed residents"
+	else
+		objective.Text = "DAWN: Regroup, recover, and record what copied your face"
+	end
+end
 remotes.Toast.OnClientEvent:Connect(function(message)
 	toastToken += 1; local token = toastToken
 	toast.Text = tostring(message); toast.TextTransparency = 0; toast.BackgroundTransparency = 0.15
@@ -103,6 +160,7 @@ remotes.Toast.OnClientEvent:Connect(function(message)
 end)
 remotes.State.OnClientEvent:Connect(function(kind, data)
 	if kind == "Cycle" then
+		currentPhase = data.phase
 		local minutes = math.floor(data.remaining / 60)
 		local seconds = data.remaining % 60
 		cycle.Text = string.format("%s  %02d:%02d", string.upper(data.phase), minutes, seconds)
@@ -110,13 +168,15 @@ remotes.State.OnClientEvent:Connect(function(kind, data)
 			lastPhase = data.phase
 			if data.phase == "Warning" then
 				toastToken += 1; toast.Text = "THE FIGURES ARE LEAVING THE TREELINE"; toast.TextTransparency = 0; toast.BackgroundTransparency = 0.15
+				if warningSound.SoundId ~= "" then warningSound:Play() end
 			elseif data.phase == "Siege" then
 				toastToken += 1; toast.Text = "THEY ARE IN THE TOWN"; toast.TextTransparency = 0; toast.BackgroundTransparency = 0.15
 			end
 		end
 	elseif kind == "Quest" then
-		objective.Text = `Supplies {data.supplies}/8  •  Ward repairs {data.wards}/2  •  Signal {data.hatch and "FOUND" or "UNKNOWN"}`
+		questState = data
 	end
+	updateObjective()
 end)
 local function toggleCraft(_, state)
 	if state == Enum.UserInputState.Begin then crafting.Visible = not crafting.Visible end
@@ -126,10 +186,25 @@ ContextActionService:BindAction("Crafting", toggleCraft, true, Enum.KeyCode.C, E
 ContextActionService:SetTitle("Crafting", "Craft")
 ContextActionService:SetPosition("Crafting", UDim2.fromScale(0.84, 0.72))
 
+local lastCondition = 100
+local function updateCondition()
+	local value = math.floor(player:GetAttribute("Condition") or 100)
+	condition.Text = `HEALTH  {value}`
+	healthFill.Size = UDim2.fromScale(value / 100, 1)
+	healthFill.BackgroundColor3 = value > 60 and Color3.fromRGB(156, 194, 105) or (value > 30 and Color3.fromRGB(222, 166, 68) or Color3.fromRGB(190, 57, 54))
+	if value < lastCondition and attackSound.SoundId ~= "" then attackSound:Play() end
+	lastCondition = value
+end
 player:GetAttributeChangedSignal("Condition"):Connect(function()
-	condition.Text = `CONDITION  {math.floor(player:GetAttribute("Condition") or 100)}`
+	updateCondition()
 end)
-condition.Text = `CONDITION  {math.floor(player:GetAttribute("Condition") or 100)}`
+local function updateInjuryOverlay()
+	downedOverlay.Visible = player:GetAttribute("Downed") == true
+	downedOverlay.Text = player:GetAttribute("NeedsBandage") and "UNCONSCIOUS\nA BANDAGE IS REQUIRED" or "GRAVELY WOUNDED\nA RESIDENT MUST STABILIZE YOU"
+end
+player:GetAttributeChangedSignal("Downed"):Connect(updateInjuryOverlay)
+player:GetAttributeChangedSignal("NeedsBandage"):Connect(updateInjuryOverlay)
+updateCondition()
 
 local function nearestDowned()
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -147,6 +222,18 @@ ContextActionService:BindAction("Rescue", function(_, state)
 end, true, Enum.KeyCode.R, Enum.KeyCode.ButtonX)
 ContextActionService:SetTitle("Rescue", "Rescue")
 ContextActionService:SetPosition("Rescue", UDim2.fromScale(0.72, 0.72))
+
+local function sprintAction(_, state)
+	if state == Enum.UserInputState.Begin then
+		remotes.Action:FireServer(Protocol.Actions.Sprint, true)
+	elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
+		remotes.Action:FireServer(Protocol.Actions.Sprint, false)
+	end
+	return Enum.ContextActionResult.Sink
+end
+ContextActionService:BindAction("Sprint", sprintAction, true, Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift, Enum.KeyCode.ButtonL3)
+ContextActionService:SetTitle("Sprint", "Run")
+ContextActionService:SetPosition("Sprint", UDim2.fromScale(0.84, 0.58))
 
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed or input.KeyCode ~= Enum.KeyCode.F then return end

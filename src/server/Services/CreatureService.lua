@@ -17,7 +17,8 @@ local function makeCreature(index, origin: Vector3): Model
 	local root = Instance.new("Part")
 	root.Name = "HumanoidRootPart"
 	root.Size = Vector3.new(2, 2, 1)
-	root.Position = groundAt(origin + Vector3.new((index - 2) * 18, 8, 95))
+	local angle = index * math.pi * 2 / 4
+	root.Position = groundAt(origin + Vector3.new(math.cos(angle) * 48, 8, math.sin(angle) * 48))
 	root.Color = Color3.fromRGB(35, 36, 43)
 	root.Parent = model
 	local body = Instance.new("Part")
@@ -75,15 +76,16 @@ local function makePlayerMimic(index: number, origin: Vector3, source: Player?):
 		return makeCreature(index, origin)
 	end
 	local model = result
-	model.Name = source.DisplayName
+	model.Name = "Mimic"
 	local root = model:FindFirstChild("HumanoidRootPart")
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if not root or not root:IsA("BasePart") or not humanoid then model:Destroy(); return makeCreature(index, origin) end
 	model.PrimaryPart = root
-	model:PivotTo(CFrame.new(groundAt(origin + Vector3.new((index - 2) * 18, 8, 95))))
-	humanoid.DisplayName = source.DisplayName
+	local angle = index * math.pi * 2 / 4
+	model:PivotTo(CFrame.new(groundAt(origin + Vector3.new(math.cos(angle) * 48, 8, math.sin(angle) * 48))))
+	humanoid.DisplayName = ""
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	humanoid.MaxHealth = 1e9; humanoid.Health = 1e9
-	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
 	local highlight = Instance.new("Highlight")
 	highlight.Name = "UnnaturalTell"
 	highlight.FillTransparency = 1
@@ -99,6 +101,36 @@ local function makePlayerMimic(index: number, origin: Vector3, source: Player?):
 	model.Parent = workspace
 	pcall(function() root:SetNetworkOwner(nil) end)
 	return model
+end
+
+local function setCreatureVisible(model: Model, visible: boolean)
+	if model:GetAttribute("Visible") == visible then return end
+	model:SetAttribute("Visible", visible)
+	for _, item in model:GetDescendants() do
+		if item:IsA("BasePart") then
+			if item:GetAttribute("OriginalTransparency") == nil then item:SetAttribute("OriginalTransparency", item.Transparency) end
+			item.Transparency = visible and (item:GetAttribute("OriginalTransparency") or 0) or 1
+			item.CanCollide = visible
+			item.CanTouch = visible
+		elseif item:IsA("Decal") then
+			if item:GetAttribute("OriginalTransparency") == nil then item:SetAttribute("OriginalTransparency", item.Transparency) end
+			item.Transparency = visible and (item:GetAttribute("OriginalTransparency") or 0) or 1
+		end
+	end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end
+end
+
+function CreatureService:StealAppearance(model: Model, player: Player)
+	local mimicHumanoid = model:FindFirstChildOfClass("Humanoid")
+	local playerHumanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if not mimicHumanoid or not playerHumanoid then return end
+	local ok, description = pcall(function() return playerHumanoid:GetAppliedDescription() end)
+	if ok and description then
+		pcall(function() mimicHumanoid:ApplyDescription(description) end)
+		mimicHumanoid.DisplayName = ""
+		mimicHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
 end
 
 function CreatureService:Init(registry) self.Registry = registry end
@@ -122,32 +154,68 @@ end
 function CreatureService:Start()
 	local world = workspace:WaitForChild("HollowSignalWorld")
 	local origin = world:GetAttribute("MapOrigin") or Vector3.zero
+	if #Players:GetPlayers() == 0 then Players.PlayerAdded:Wait() end
+	task.wait(1)
 	local sessionPlayers = Players:GetPlayers()
-	for i = 1, self.Registry.Config.Creature.Count do
+	local firstRoot = sessionPlayers[1] and sessionPlayers[1].Character and sessionPlayers[1].Character:WaitForChild("HumanoidRootPart", 10)
+	if firstRoot and firstRoot:IsA("BasePart") then origin = firstRoot.Position end
+	local creatureCount = math.clamp(#sessionPlayers * self.Registry.Config.Creature.PerPlayer, self.Registry.Config.Creature.MinCount, self.Registry.Config.Creature.MaxCount)
+	for i = 1, creatureCount do
 		local source = #sessionPlayers > 0 and sessionPlayers[(i - 1) % #sessionPlayers + 1] or nil
 		local creature = makePlayerMimic(i, origin, source)
 		creature:SetAttribute("State", "WaitingBeyondTown")
+		setCreatureVisible(creature, false)
 		table.insert(self.Creatures, creature)
 	end
+	local function reconcileCreatures()
+		local currentPlayers = Players:GetPlayers()
+		local desired = math.clamp(#currentPlayers * self.Registry.Config.Creature.PerPlayer, self.Registry.Config.Creature.MinCount, self.Registry.Config.Creature.MaxCount)
+		while #self.Creatures < desired do
+			local index = #self.Creatures + 1
+			local source = #currentPlayers > 0 and currentPlayers[math.random(1, #currentPlayers)] or nil
+			local creature = makePlayerMimic(index, origin, source)
+			creature:SetAttribute("State", "WaitingBeyondTown")
+			setCreatureVisible(creature, self.Registry.CycleService:IsNight())
+			table.insert(self.Creatures, creature)
+		end
+		while #self.Creatures > desired do
+			local creature = table.remove(self.Creatures)
+			if creature then creature:Destroy() end
+		end
+	end
+	Players.PlayerAdded:Connect(function() task.delay(1, reconcileCreatures) end)
+	Players.PlayerRemoving:Connect(function() task.delay(1, reconcileCreatures) end)
+	self.Registry.Remotes.Toast:FireAllClients(`{#self.Creatures} familiar faces are waiting beyond the village`)
+	print(`[Hollow Signal] Spawned {#self.Creatures} player-mimic creatures near {origin}`)
 	local lastAttack = {}
 	while task.wait(0.35) do
-		local active = self.Registry.CycleService:IsNight()
+		local phase = self.Registry.CycleService.Phase
+		local active = phase == "Siege"
 		for i, model in self.Creatures do
 			local root = model.PrimaryPart
 			local humanoid = model:FindFirstChildOfClass("Humanoid")
 			if not root or not humanoid then continue end
+			setCreatureVisible(model, active)
 			if not active then
 				model:SetAttribute("State", self.Registry.CycleService.Phase == "Warning" and "Approaching" or "WaitingBeyondTown")
-				humanoid:MoveTo(groundAt(origin + Vector3.new((i - 2) * 18, 8, 95)))
+				local waitingAngle = i * math.pi * 2 / #self.Creatures
+				humanoid:MoveTo(groundAt(origin + Vector3.new(math.cos(waitingAngle) * 48, 8, math.sin(waitingAngle) * 48)))
 				continue
 			end
-			model:SetAttribute("State", "Hunting")
+			model:SetAttribute("State", phase == "Warning" and "Approaching" or "Hunting")
+			local nearbyPlayer = Players:GetPlayers()[1]
+			local nearbyRoot = nearbyPlayer and nearbyPlayer.Character and nearbyPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if nearbyRoot and nearbyRoot:IsA("BasePart") and (root.Position - nearbyRoot.Position).Magnitude > 100 then
+				local arrivalAngle = i * math.pi * 2 / #self.Creatures
+				local arrival = groundAt(nearbyRoot.Position + Vector3.new(math.cos(arrivalAngle) * 42, 8, math.sin(arrivalAngle) * 42))
+				model:PivotTo(CFrame.lookAt(arrival, nearbyRoot.Position))
+			end
 			if (model:GetAttribute("StaggeredUntil") or 0) > os.clock() then humanoid:Move(Vector3.zero); continue end
 			local target, distance = self:NearestTarget(root.Position)
 			if target then
 				local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
 				if targetRoot then
-					humanoid.WalkSpeed = self.Registry.Config.Creature.ChaseSpeed
+					humanoid.WalkSpeed = phase == "Warning" and self.Registry.Config.Creature.WalkSpeed or self.Registry.Config.Creature.ChaseSpeed
 					local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 6, AgentCanJump = true })
 					local ok = pcall(function() path:ComputeAsync(root.Position, targetRoot.Position) end)
 					local waypoints = ok and path.Status == Enum.PathStatus.Success and path:GetWaypoints() or {}
@@ -155,6 +223,7 @@ function CreatureService:Start()
 					if distance <= self.Registry.Config.Creature.AttackRange and os.clock() - (lastAttack[model] or 0) > self.Registry.Config.Creature.AttackCooldown then
 						lastAttack[model] = os.clock()
 						self.Registry.ConditionService:Damage(target, self.Registry.Config.Creature.AttackDamage)
+						if target:GetAttribute("Downed") then self:StealAppearance(model, target) end
 					end
 				end
 			else

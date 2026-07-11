@@ -1,6 +1,5 @@
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerScriptService = game:GetService("ServerScriptService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(shared:WaitForChild("Config"))
@@ -15,7 +14,7 @@ for _, name in { Protocol.Action, Protocol.State, Protocol.Toast } do
 	remote.Parent = remotes
 end
 
-local services = ServerScriptService.Server.Services
+local services = script.Parent:WaitForChild("Services")
 local order = {
 	"WorldService",
 	"ProfileService",
