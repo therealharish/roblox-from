@@ -1,0 +1,7 @@
+{
+  "name": "HouseInspect",
+  "tree": {
+    "$className": "Folder",
+    "$path": "house-model"
+  }
+}
