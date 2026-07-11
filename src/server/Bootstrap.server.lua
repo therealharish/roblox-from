@@ -48,5 +48,3 @@ for _, name in order do
 		if service.Start then task.spawn(function() service:Start() end) end
 	end
 end
-
-print(`[Hollow Signal] Server started with {#order} services`)
