@@ -35,8 +35,8 @@ return table.freeze({
 		-- resulting asset id here as "rbxassetid://123456789".
 		AmbientMusicId = "rbxassetid://119485757837366",
 		MusicVolume = 0.32,
-		WarningScreechId = "rbxassetid://88369188026590",
-		AttackStingId = "rbxassetid://89011060784735",
+		WarningScreechId = "rbxassetid://106468667941386",
+		AttackStingId = "rbxassetid://98960463876745",
 	},
 	Items = {
 		Scrap = { display = "Scrap", stack = 8 },

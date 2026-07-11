@@ -185,7 +185,6 @@ local function wireAuthoredDoors(root: Folder)
 			wired += 1
 		end
 	end
-	print(`[Hollow Signal] Wired {wired} authored door parts`)
 end
 
 local function removeTemplateBaseplates(root: Folder)
@@ -200,7 +199,6 @@ local function removeTemplateBaseplates(root: Folder)
 			end
 		end
 	end
-	print(`[Hollow Signal] Removed {removed} template baseplate slabs`)
 end
 
 local function groundFloatingHouses(root: Folder)
@@ -224,7 +222,6 @@ local function groundFloatingHouses(root: Folder)
 			end
 		end
 	end
-	print(`[Hollow Signal] Grounded {moved} floating houses`)
 end
 
 local function secureAuthoredWindows(root: Folder)
@@ -253,7 +250,6 @@ local function secureAuthoredWindows(root: Folder)
 			end
 		end
 	end
-	print(`[Hollow Signal] Secured {secured} authored window parts`)
 end
 
 local function addAuthoredGameplay(root: Folder)
@@ -371,7 +367,6 @@ function WorldService:Start()
 		authoredRoot.Parent = workspace
 		addAuthoredGameplay(authoredRoot)
 		applyAtmosphere()
-		print("[Hollow Signal] Authored village detected; procedural town generation skipped")
 		return
 	end
 	for _, oldName in ipairs({ "Baseplate", "SpawnLocation" }) do
