@@ -12,6 +12,18 @@ function InteractionService:Allowed(player)
 	return bucket.count <= self.Registry.Config.RemoteRatePerSecond
 end
 function InteractionService:Toast(player, message) self.Registry.Remotes.Toast:FireClient(player, message) end
+local function setDoorCollision(doorInstance, collidable)
+	if doorInstance:IsA("BasePart") then
+		doorInstance.CanCollide = collidable
+	elseif doorInstance:IsA("Model") then
+		for _, child in ipairs(doorInstance:GetDescendants()) do
+			if child:IsA("BasePart") then
+				child.CanCollide = collidable
+			end
+		end
+	end
+end
+
 function InteractionService:Start()
 	for _, descendant in workspace:GetDescendants() do
 		if descendant:IsA("ProximityPrompt") then
@@ -45,6 +57,7 @@ function InteractionService:Start()
 							local opening = not door:GetAttribute("DoorOpen")
 							door:SetAttribute("DoorOpen", opening)
 							descendant.ActionText = opening and "Close" or "Open"
+					setDoorCollision(doorModel or door, not opening)
 							local target = opening and (closed * CFrame.Angles(0, math.rad(92), 0)) or closed
 							local hinge = doorModel and doorModel:IsA("Model") and doorModel:FindFirstChildWhichIsA("HingeConstraint", true)
 							if hinge and hinge:IsA("HingeConstraint") then

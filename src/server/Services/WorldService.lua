@@ -4,6 +4,68 @@ local CollectionService = game:GetService("CollectionService")
 
 local WorldService = {}
 
+-- The authored point is usually a tree/model location, not the ground.
+-- Sample a circle around it, keep only fairly-flat surfaces (floors/terrain),
+-- prefer the lowest flat surface so we don't land on a roof/branch, but also
+-- pick the one closest to the reference so the crate stays "near" the object.
+local function findSupplyGround(referencePosition)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {}
+
+	local radius = 16
+	local samples = 16
+	local candidates = {}
+
+	table.insert(candidates, referencePosition)
+	for s = 1, samples do
+		local angle = s * math.pi * 2 / samples
+		table.insert(candidates, referencePosition + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius))
+	end
+
+	local flatSurfaces = {}
+	local lowestY = math.huge
+	for _, pos in ipairs(candidates) do
+		local result = workspace:Raycast(pos + Vector3.new(0, 100, 0), Vector3.new(0, -200, 0), params)
+		if result and result.Normal.Y >= 0.8 then
+			table.insert(flatSurfaces, {
+				position = result.Position,
+				distance = (result.Position - referencePosition).Magnitude,
+			})
+			lowestY = math.min(lowestY, result.Position.Y)
+		end
+	end
+
+	if #flatSurfaces > 0 then
+		local best = nil
+		local bestDistance = math.huge
+		for _, surf in ipairs(flatSurfaces) do
+			if surf.position.Y <= lowestY + 3 and surf.distance < bestDistance then
+				best = surf
+				bestDistance = surf.distance
+			end
+		end
+		if best then
+			return best.position + Vector3.new(0, 1, 0)
+		end
+	end
+
+	local bestAny = nil
+	local bestAnyY = math.huge
+	for _, pos in ipairs(candidates) do
+		local result = workspace:Raycast(pos + Vector3.new(0, 100, 0), Vector3.new(0, -200, 0), params)
+		if result and result.Position.Y < bestAnyY then
+			bestAnyY = result.Position.Y
+			bestAny = result.Position
+		end
+	end
+	if bestAny then
+		return bestAny + Vector3.new(0, 1, 0)
+	end
+
+	return referencePosition
+end
+
 local function part(name: string, size: Vector3, position: Vector3, color: Color3, parent: Instance, material: Enum.Material?): Part
 	local p = Instance.new("Part")
 	p.Name = name
@@ -133,6 +195,18 @@ local function hasAuthoredMap(): boolean
 	return modelCount >= 5 or partCount >= 35 or workspace:GetAttribute("UseAuthoredMap") == true
 end
 
+local function setDoorCollision(doorInstance, collidable)
+	if doorInstance:IsA("BasePart") then
+		doorInstance.CanCollide = collidable
+	elseif doorInstance:IsA("Model") then
+		for _, child in ipairs(doorInstance:GetDescendants()) do
+			if child:IsA("BasePart") then
+				child.CanCollide = collidable
+			end
+		end
+	end
+end
+
 local function wireAuthoredDoors(root: Folder)
 	local wired = 0
 	local seen: { [BasePart]: boolean } = {}
@@ -156,6 +230,7 @@ local function wireAuthoredDoors(root: Folder)
 			seen[candidate] = true
 			candidate:SetAttribute("ClosedCFrame", candidate.CFrame)
 			candidate:SetAttribute("DoorOpen", false)
+			setDoorCollision(item, true)
 			local doorPrompt = candidate:FindFirstChildOfClass("ProximityPrompt") or prompt(candidate, "Open", "Door", "Door")
 			doorPrompt.ActionText = "Open"
 			doorPrompt.ObjectText = "Door"
@@ -252,7 +327,7 @@ local function secureAuthoredWindows(root: Folder)
 	end
 end
 
-local function addAuthoredGameplay(root: Folder)
+local function addAuthoredGameplay(root: Folder, config)
 	removeTemplateBaseplates(root)
 	groundFloatingHouses(root)
 	local origin = findMapOrigin()
@@ -265,19 +340,9 @@ local function addAuthoredGameplay(root: Folder)
 	end
 	wireAuthoredDoors(root)
 	secureAuthoredWindows(root)
-	local markerOffsets = {
-		Vector3.new(8, 1, 7), Vector3.new(-10, 1, 8), Vector3.new(14, 1, -9),
-		Vector3.new(-16, 1, -8), Vector3.new(20, 1, 13), Vector3.new(-22, 1, 12),
-		Vector3.new(27, 1, -15), Vector3.new(-29, 1, -14),
-	}
-	local terrainParams = RaycastParams.new()
-	terrainParams.FilterType = Enum.RaycastFilterType.Include
-	terrainParams.FilterDescendantsInstances = { workspace.Terrain }
-	for i, offset in ipairs(markerOffsets) do
-		local intended = origin + offset
-		local ground = workspace:Raycast(intended + Vector3.new(0, 150, 0), Vector3.new(0, -350, 0), terrainParams)
-		local position = ground and (ground.Position + Vector3.new(0, 1, 0)) or intended
-		local crate = part(`Searchable{i}`, Vector3.new(3, 2, 3), position, Color3.fromRGB(85, 65, 43), root)
+	for i, position in ipairs(config.SupplySpawns or {}) do
+		local cratePosition = findSupplyGround(position)
+		local crate = part(`Searchable{i}`, Vector3.new(3, 2, 3), cratePosition, Color3.fromRGB(85, 65, 43), root)
 		crate:SetAttribute("Looted", false)
 		local highlight = Instance.new("Highlight")
 		highlight.FillColor = Color3.fromRGB(214, 172, 77)
@@ -304,19 +369,20 @@ local function addAuthoredGameplay(root: Folder)
 		highlight.FillColor = Color3.fromRGB(235, 188, 82); highlight.FillTransparency = 0.7; highlight.OutlineTransparency = 0.15; highlight.DepthMode = Enum.HighlightDepthMode.Occluded; highlight.Parent = crate
 		prompt(crate, "Search", "Household supplies", "Loot")
 	end
-	local workbench = part("Workbench", Vector3.new(6, 3, 3), origin + Vector3.new(-14, 2, 8), Color3.fromRGB(69, 48, 33), root)
+	local workbenchPos = Vector3.new(-43.599, 14.193, 43.145)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {}
+	local shortSurface = workspace:Raycast(workbenchPos + Vector3.new(0, 3, 0), Vector3.new(0, -15, 0), rayParams)
+	local surface = shortSurface or workspace:Raycast(workbenchPos + Vector3.new(0, 50, 0), Vector3.new(0, -100, 0), rayParams)
+	local workbenchY = surface and surface.Position.Y or workbenchPos.Y
+	local workbench = part("Workbench", Vector3.new(6, 3, 3), Vector3.new(workbenchPos.X, workbenchY + 1.5, workbenchPos.Z), Color3.fromRGB(69, 48, 33), root)
 	prompt(workbench, "Craft", "Village workbench", "Craft")
-	local ward = part("Ward", Vector3.new(2, 3, 0.3), origin + Vector3.new(8, 3, 10), Color3.fromRGB(245, 189, 66), root, Enum.Material.Neon)
-	ward:SetAttribute("Integrity", 100)
-	CollectionService:AddTag(ward, "Ward")
-	prompt(ward, "Repair", "Protective ward", "RepairWard")
-	local zone = part("SafeZone", Vector3.new(30, 14, 30), origin + Vector3.new(0, 7, 0), Color3.fromRGB(0, 0, 0), root)
-	zone.Transparency = 1; zone.CanCollide = false; CollectionService:AddTag(zone, "SafeZone")
 	local hatch = part("OldHatch", Vector3.new(8, 0.7, 8), origin + Vector3.new(65, 1, -55), Color3.fromRGB(28, 28, 30), root, Enum.Material.Metal)
 	prompt(hatch, "Investigate", "Buried signal hatch", "Clue")
 end
 
-local function building(root: Folder, name: string, center: Vector3, color: Color3, safe: boolean)
+local function building(root: Folder, name: string, center: Vector3, color: Color3)
 	local model = Instance.new("Model")
 	model.Name = name
 	model.Parent = root
@@ -342,16 +408,6 @@ local function building(root: Folder, name: string, center: Vector3, color: Colo
 	for _, offset in ipairs({ Vector3.new(5,1.5,0), Vector3.new(9,1.5,0) }) do
 		part("Chair", Vector3.new(1.8, 3, 1.8), center + offset, Color3.fromRGB(60, 46, 35), model)
 	end
-	if safe then
-		local zone = part("SafeZone", Vector3.new(32, 12, 24), center + Vector3.new(0, 6, 0), Color3.fromRGB(0, 0, 0), model)
-		zone.Transparency = 1
-		zone.CanCollide = false
-		CollectionService:AddTag(zone, "SafeZone")
-		local ward = part("Ward", Vector3.new(2, 3, 0.3), center + Vector3.new(0, 6, 12), Color3.fromRGB(245, 189, 66), model, Enum.Material.Neon)
-		ward:SetAttribute("Integrity", 100)
-		CollectionService:AddTag(ward, "Ward")
-		prompt(ward, "Repair", "Protective ward", "RepairWard")
-	end
 end
 
 function WorldService:Init(registry)
@@ -365,7 +421,7 @@ function WorldService:Start()
 		local authoredRoot = Instance.new("Folder")
 		authoredRoot.Name = "HollowSignalWorld"
 		authoredRoot.Parent = workspace
-		addAuthoredGameplay(authoredRoot)
+		addAuthoredGameplay(authoredRoot, self.Registry.Config)
 		applyAtmosphere()
 		return
 	end
@@ -383,12 +439,12 @@ function WorldService:Start()
 	part("CrossRoad", Vector3.new(180, 0.4, 26), Vector3.new(0, 0, -15), Color3.fromRGB(47, 48, 53), root, Enum.Material.Concrete)
 	part("SidewalkL", Vector3.new(7, 0.5, 540), Vector3.new(-19, 0.15, 0), Color3.fromRGB(102, 101, 94), root, Enum.Material.Concrete)
 	part("SidewalkR", Vector3.new(7, 0.5, 540), Vector3.new(19, 0.15, 0), Color3.fromRGB(102, 101, 94), root, Enum.Material.Concrete)
-	building(root, "Communal Shelter", Vector3.new(-55, 0, -60), Color3.fromRGB(91, 78, 68), true)
-	building(root, "Clinic", Vector3.new(55, 0, -60), Color3.fromRGB(111, 121, 115), true)
-	building(root, "Workshop", Vector3.new(-55, 0, 30), Color3.fromRGB(115, 91, 67), false)
-	building(root, "Diner", Vector3.new(55, 0, 30), Color3.fromRGB(108, 82, 80), false)
+	building(root, "Communal Shelter", Vector3.new(-55, 0, -60), Color3.fromRGB(91, 78, 68))
+	building(root, "Clinic", Vector3.new(55, 0, -60), Color3.fromRGB(111, 121, 115))
+	building(root, "Workshop", Vector3.new(-55, 0, 30), Color3.fromRGB(115, 91, 67))
+	building(root, "Diner", Vector3.new(55, 0, 30), Color3.fromRGB(108, 82, 80))
 	for i, pos in ipairs({ Vector3.new(-75,0,110), Vector3.new(70,0,115), Vector3.new(-65,0,190), Vector3.new(65,0,195), Vector3.new(-70,0,-155), Vector3.new(72,0,-165) }) do
-		building(root, `House {i}`, pos, Color3.fromRGB(83 + i * 4, 78, 73), i == 1)
+		building(root, `House {i}`, pos, Color3.fromRGB(83 + i * 4, 78, 73))
 	end
 
 	local spawn = Instance.new("SpawnLocation")
